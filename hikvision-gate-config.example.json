@@ -1,0 +1,27 @@
+{
+  "description": "Example / tested Hikvision gate-open configuration",
+  "monitor": {
+    "name": "Indoor monitor",
+    "address": "192.168.1.84",
+    "model": "DS-KH6320-WTE1/EU",
+    "sdkPort": 8000
+  },
+  "outdoorStation": {
+    "name": "Outdoor video intercom",
+    "address": "192.168.1.15",
+    "model": "DS-KD8003-IME1/EU",
+    "sdkPort": 8000,
+    "httpPort": 80
+  },
+  "workingRequest": {
+    "transport": "HCNetSDK NET_DVR_STDXMLConfig through indoor monitor",
+    "method": "PUT",
+    "path": "/ISAPI/AccessControl/RemoteControl/door/1",
+    "xml": "<RemoteControlDoor version=\"2.0\" xmlns=\"http://www.isapi.org/ver20/XMLSchema\"><channelNo>1</channelNo><cmd>open</cmd><controlType>monitor</controlType></RemoteControlDoor>"
+  },
+  "notes": [
+    "The outdoor station answered video requests but did not accept the tested direct SDK login from the LAN.",
+    "The working path logs in to the indoor monitor and tunnels the ISAPI command through HCNetSDK.",
+    "No password is stored in this file."
+  ]
+}
