@@ -683,3 +683,6 @@ Verifiche completate:
 [OK] Avvio automatico H24
 [OK] Funzionamento dopo reboot senza login
 ```
+<p align="center">
+  Powered by <kbd>Mauro De Gaetanis</kbd>
+</p>
