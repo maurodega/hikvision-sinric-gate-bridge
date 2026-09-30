@@ -1,131 +1,175 @@
 # Hikvision Gate Bridge — Google Home + Sinric Pro + HCNetSDK
 
-Bridge Windows/Python per aprire un cancello Hikvision con un comando vocale Google Home, passando da Sinric Pro e dall'HCNetSDK installato con iVMS-4200.
+Bridge per **Windows 10/11 x64** che permette di aprire un cancello Hikvision con Google Home usando **Sinric Pro**, Python e l'HCNetSDK installato insieme a iVMS-4200.
 
-La catena è stata verificata realmente su Windows 11 x64: il comando vocale arriva a Sinric Pro, il bridge Python richiama PowerShell, l'SDK Hikvision effettua il login sul monitor interno e inoltra il comando ISAPI di apertura.
+Il progetto può funzionare in due modalità:
 
-> **Nota importante:** questo progetto aziona un dispositivo fisico. Usalo solo su impianti che possiedi o amministri e mantieni sempre un metodo di apertura locale indipendente. Le automazioni cloud sono un livello di comodità, non un controllo safety/security-critical.
+- **interattiva**, utile per il primo test;
+- **H24**, con avvio automatico di Windows anche senza login dell'utente.
+
+> Il progetto invia un comando reale di apertura. Usalo esclusivamente su un impianto che possiedi o amministri.
+
+---
 
 ## Indice
 
-- [Cosa fa](#cosa-fa)
-- [Architettura](#architettura)
-- [Configurazione testata e IP](#configurazione-testata-e-ip)
+- [Come funziona](#come-funziona)
+- [Configurazione di riferimento](#configurazione-di-riferimento)
 - [Requisiti](#requisiti)
-- [Installazione rapida](#installazione-rapida)
-- [Funzione 1 — test Hikvision locale](#funzione-1--test-hikvision-locale)
-- [Funzione 2 — bridge Sinric Pro interattivo](#funzione-2--bridge-sinric-pro-interattivo)
-- [Funzione 3 — Google Home](#funzione-3--google-home)
-- [Funzione 4 — funzionamento H24 senza login](#funzione-4--funzionamento-h24-senza-login)
-- [Funzione 5 — stato e log](#funzione-5--stato-e-log)
-- [Adattarlo a un altro impianto](#adattarlo-a-un-altro-impianto)
-- [Struttura del repository](#struttura-del-repository)
-- [Sicurezza](#sicurezza)
+- [Installazione](#installazione)
+- [1. Verifica dei prerequisiti](#1-verifica-dei-prerequisiti)
+- [2. Test Hikvision locale](#2-test-hikvision-locale)
+- [3. Configurazione Sinric Pro](#3-configurazione-sinric-pro)
+- [4. Configurazione Google Home](#4-configurazione-google-home)
+- [5. Avvio interattivo del bridge](#5-avvio-interattivo-del-bridge)
+- [6. Configurazione H24](#6-configurazione-h24)
+- [7. Stato, log e gestione](#7-stato-log-e-gestione)
+- [Adattamento a un altro impianto](#adattamento-a-un-altro-impianto)
 - [Troubleshooting](#troubleshooting)
-- [Pubblicazione su GitHub](#pubblicazione-su-github)
+- [File principali](#file-principali)
 
 ---
 
-## Cosa fa
-
-Il progetto fornisce cinque funzioni principali:
-
-1. **Apertura locale del cancello** via HCNetSDK/ISAPI.
-2. **Bridge Python Sinric Pro → Hikvision** con Smart Switch momentaneo.
-3. **Comando vocale Google Home** tramite routine/automazione.
-4. **Avvio H24 automatico** all'accensione di Windows, anche senza login.
-5. **Diagnostica e log** per rete, SDK, Python e task pianificato.
-
-Il bridge include inoltre due protezioni semplici:
-
-- cooldown predefinito di `10` secondi contro comandi duplicati;
-- finestra iniziale di `8` secondi in cui ignora un eventuale vecchio stato `ON` ripristinato da Sinric Pro.
-
----
-
-## Architettura
-
-```mermaid
-flowchart TD
-    A[Voce: "apri cancello"] --> B[Google Home]
-    B --> C[Sinric Pro Smart Switch "Cancello"]
-    C --> D[sinric-hikvision-bridge.py]
-    D --> E[hikvision-open-gate.ps1]
-    E --> F[hikvision-diagnose.ps1]
-    F --> G[HCNetSDK.dll x64]
-    G --> H[Monitor interno Hikvision\nDS-KH6320-WTE1/EU\n192.168.1.84:8000]
-    H --> I[NET_DVR_STDXMLConfig]
-    I --> J[PUT /ISAPI/AccessControl/RemoteControl/door/1]
-    J --> K[Cancello]
-```
-
-Dettagli aggiuntivi: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
-
----
-
-## Configurazione testata e IP
-
-| Ruolo | Nome device | Modello | IP | Porta | Note |
-|---|---|---|---|---:|---|
-| Server bridge | Windows Home-Domotica | Dell Latitude 7490 | DHCP/statico a scelta | — | Windows 11 Pro x64, Python 3.13.15 |
-| Monitor interno | Hikvision Indoor Monitor | `DS-KH6320-WTE1/EU` | `192.168.1.84` | `8000` | **Device usato dal bridge** |
-| Postazione esterna | Hikvision Outdoor Station | `DS-KD8003-IME1/EU` | `192.168.1.15` | `8000` / `80` | Non usata per il login del percorso funzionante |
-| Device cloud | Sinric Pro Smart Switch | `Cancello` | cloud | — | Trigger momentaneo Google Home |
-
-Nel setup verificato, la postazione esterna rispondeva al video ma non accettava il login SDK diretto dalla LAN. Il percorso affidabile è risultato:
+## Come funziona
 
 ```text
-HCNetSDK -> monitor interno 192.168.1.84 -> NET_DVR_STDXMLConfig -> ISAPI AccessControl -> cancello
+Google Home
+    │
+    │ routine "apri cancello"
+    ▼
+Sinric Pro
+Smart Switch "Cancello"
+    │
+    ▼
+sinric-hikvision-bridge.py
+    │
+    ▼
+hikvision-open-gate.ps1
+    │
+    ▼
+hikvision-diagnose.ps1
+    │
+    ▼
+HCNetSDK.dll x64
+    │
+    ▼
+Monitor interno Hikvision
+DS-KH6320-WTE1/EU
+192.168.1.84:8000
+    │
+    ▼
+NET_DVR_STDXMLConfig
+    │
+    ▼
+PUT /ISAPI/AccessControl/RemoteControl/door/1
+    │
+    ▼
+Cancello
 ```
 
-Configurazione tecnica di esempio: [`hikvision-gate-config.example.json`](hikvision-gate-config.example.json).
+Il dispositivo Sinric viene usato come **pulsante momentaneo**: quando riceve `ON`, il bridge invia il comando Hikvision e riporta subito lo switch virtuale su `OFF`.
+
+Il bridge applica inoltre:
+
+- cooldown di `10` secondi contro aperture duplicate;
+- protezione di `8` secondi all'avvio contro un eventuale vecchio stato `ON` ripristinato dal cloud.
+
+Per maggiori dettagli tecnici: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+---
+
+## Configurazione di riferimento
+
+Questa è la configurazione sulla quale il progetto è stato verificato.
+
+| Ruolo | Nome device | Modello | IP / endpoint | Porta | Utilizzo |
+|---|---|---|---|---:|---|
+| Server bridge | `Home-Domotica` | Dell Latitude 7490 | IP LAN del server | — | Windows + Python + task H24 |
+| Monitor interno | `Hikvision Indoor Monitor` | `DS-KH6320-WTE1/EU` | `192.168.1.84` | `8000` | **Device usato per login e apertura** |
+| Postazione esterna | `Hikvision Outdoor Station` | `DS-KD8003-IME1/EU` | `192.168.1.15` | `8000` / `80` | Presente nell'impianto, non usata dal percorso di apertura |
+| Device cloud | `Cancello` | Sinric Pro Smart Switch | Sinric Pro Cloud | — | Trigger usato da Google Home |
+
+Nel setup di riferimento il comando affidabile è:
+
+```text
+HCNetSDK
+   -> monitor interno 192.168.1.84
+   -> NET_DVR_STDXMLConfig
+   -> ISAPI AccessControl
+   -> cancello
+```
+
+La postazione esterna `192.168.1.15` è documentata perché fa parte dell'impianto, ma il bridge **non effettua il login direttamente su di essa**.
+
+Configurazione di esempio: [`hikvision-gate-config.example.json`](hikvision-gate-config.example.json).
 
 ---
 
 ## Requisiti
 
-### Sistema operativo
+### Windows
 
-- Windows 11 x64 **testato**.
-- Windows 10/11 x64 dovrebbe essere il target naturale, ma questo repository è stato verificato sul sistema indicato sopra.
-- Windows PowerShell 5.1 64 bit (`System32`).
+Testato su:
+
+```text
+Windows 11 Pro x64
+Windows PowerShell 5.1 x64
+```
+
+Il progetto usa la versione a 64 bit di Windows PowerShell:
+
+```text
+C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+```
+
+La versione sotto `SysWOW64` è a 32 bit e non deve essere usata con l'HCNetSDK x64 del setup testato.
+
+---
 
 ### Python
 
-Testato con **Python 3.13.15 x64**.
+Testato con **Python 3.13 x64**.
 
 Download ufficiale:
 
-- [Python for Windows](https://www.python.org/downloads/windows/)
+- [Python per Windows](https://www.python.org/downloads/windows/)
 
-Percorso usato nel setup H24:
+Per usare il progetto senza modificare gli script H24, installare Python in:
+
+```text
+C:\Home-Domotica\Python
+```
+
+Il file eseguibile deve quindi risultare:
 
 ```text
 C:\Home-Domotica\Python\python.exe
 ```
 
-Il bridge usa il pacchetto:
+Dipendenza Python richiesta:
 
 ```text
 sinricpro
 ```
 
-installabile da `requirements.txt`.
+---
 
 ### Hikvision iVMS-4200 / HCNetSDK
 
-Testato con **iVMS-4200 V3.14.1.4_E**.
+Serve iVMS-4200 perché installa `HCNetSDK.dll` e le relative dipendenze.
 
-- [Download ufficiale iVMS-4200](https://www.hikvision.com/en/support/download/software/ivms4200-series/)
+Link ufficiale:
+
+- [Hikvision iVMS-4200](https://www.hikvision.com/en/support/download/software/ivms4200-series/)
 - [Hikvision Open Platform](https://open.hikvision.com/)
 
-Nel setup testato sono stati installati almeno:
+Nel setup testato sono sufficienti almeno:
 
 - Basic Configuration
 - Video
 - Access Control
 
-Non è necessario configurare i device dentro iVMS-4200 per questo bridge: ci interessa soprattutto che siano presenti `HCNetSDK.dll` e le sue dipendenze.
+Non è necessario aggiungere o configurare i device dentro iVMS-4200: per questo progetto servono principalmente le librerie SDK.
 
 Percorso verificato:
 
@@ -133,56 +177,89 @@ Percorso verificato:
 C:\Program Files (x86)\iVMS-4200 Site\iVMS-4200 Client\Client\HCNetSDK.dll
 ```
 
-La DLL installata è **x64**. Per questo il repository usa PowerShell 64 bit sotto `System32`, non `SysWOW64`.
+---
 
 ### Sinric Pro
 
+Occorrono:
+
 - account Sinric Pro;
-- Smart Switch chiamato, ad esempio, `Cancello`;
+- uno **Smart Switch**;
 - Device ID;
 - App Key;
 - App Secret.
 
-Link utili:
+Link:
 
 - [Sinric Pro](https://sinric.pro/)
 - [Documentazione Sinric Pro](https://help.sinric.pro/)
 - [Quickstart Sinric Pro](https://help.sinric.pro/pages/quickstarts)
 
+---
+
 ### Google Home
 
-Serve collegare Sinric Pro a Google Home tramite **Works with Google** e creare una routine/automazione che accenda lo Smart Switch `Cancello`.
+Serve un account Google Home collegato a Sinric Pro tramite **Works with Google**.
 
-- [Gestire le automazioni Google Home](https://support.google.com/googlehome/answer/16214649?hl=it)
+Link:
+
+- [Automazioni Google Home](https://support.google.com/googlehome/answer/16214649?hl=it)
 - [Comandi iniziali, condizioni e azioni](https://support.google.com/googlehome/answer/15684394?hl=it)
 
 ---
 
-## Installazione rapida
+## Installazione
 
-### 1. Metti il repository nel percorso previsto
+### 1. Copiare il progetto
 
-Per usare gli script H24 senza modificarli, usa:
+Il percorso previsto dagli script H24 è:
 
 ```text
 C:\Home-Domotica\Hikvision
 ```
 
-Esempio:
+Crearlo se necessario:
 
 ```powershell
 New-Item -ItemType Directory -Force C:\Home-Domotica\Hikvision
 ```
 
-Poi copia/clona qui il repository.
+Copiare quindi tutti i file del progetto in quella cartella.
 
-### 2. Installa la dipendenza Python
+La struttura principale sarà:
+
+```text
+C:\Home-Domotica\
+├── Python\
+│   └── python.exe
+│
+├── Hikvision\
+│   ├── sinric-hikvision-bridge.py
+│   ├── hikvision-open-gate.ps1
+│   ├── hikvision-diagnose.ps1
+│   ├── start-sinric-bridge-interactive.ps1
+│   ├── configure-hikvision-h24.ps1
+│   ├── run-sinric-bridge-h24.ps1
+│   ├── check-requirements.ps1
+│   └── ...
+│
+├── Config\
+└── Logs\
+```
+
+Le cartelle `Config` e `Logs` vengono create automaticamente dalla configurazione H24.
+
+### 2. Installare la dipendenza Python
 
 ```powershell
 C:\Home-Domotica\Python\python.exe -m pip install -r C:\Home-Domotica\Hikvision\requirements.txt
 ```
 
-### 3. Controlla i prerequisiti
+---
+
+## 1. Verifica dei prerequisiti
+
+Eseguire:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Home-Domotica\Hikvision\check-requirements.ps1
@@ -190,22 +267,39 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Home-Domotica\Hikvisi
 
 Il controllo verifica:
 
-- processo PowerShell a 64 bit;
-- Python;
-- import `sinricpro`;
-- presenza `HCNetSDK.dll`;
+- PowerShell a 64 bit;
+- presenza di Python;
+- import del modulo `sinricpro`;
+- presenza di `HCNetSDK.dll`;
 - raggiungibilità TCP del monitor Hikvision sulla porta SDK.
+
+Esempio di risultato:
+
+```text
+Check                         Status
+-----                         ------
+64-bit PowerShell             OK
+Python executable             OK
+HCNetSDK.dll                  OK
+Python version                OK
+Python sinricpro module       OK
+Hikvision monitor SDK port    OK
+```
+
+Se uno dei controlli è `FAIL`, consultare [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md).
 
 ---
 
-## Funzione 1 — test Hikvision locale
+## 2. Test Hikvision locale
 
-### Test sicuro: solo login, nessuna apertura
+Prima di configurare Sinric Pro conviene verificare che Windows riesca a comunicare direttamente con il monitor Hikvision.
 
-Apri PowerShell e imposta temporaneamente la password:
+### Test login senza apertura
+
+Aprire PowerShell:
 
 ```powershell
-$env:HIKVISION_GATE_PASSWORD = '<password>'
+$env:HIKVISION_GATE_PASSWORD = '<password-hikvision>'
 ```
 
 Poi:
@@ -228,12 +322,12 @@ Risultato atteso:
 LOGIN_OK (read-only connection; no opening command sent)
 ```
 
-### Test di apertura reale
+### Test apertura
 
-> Questo comando aziona fisicamente il cancello.
+> Il comando seguente aziona fisicamente il cancello.
 
 ```powershell
-$env:HIKVISION_GATE_PASSWORD = '<password>'
+$env:HIKVISION_GATE_PASSWORD = '<password-hikvision>'
 cd C:\Home-Domotica\Hikvision
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\hikvision-open-gate.ps1
 ```
@@ -245,43 +339,71 @@ LOGIN_OK
 OPEN_COMMAND_ACCEPTED (ISAPI tunnel; physical opening not verified)
 ```
 
-La richiesta usata è:
-
-```text
-PUT /ISAPI/AccessControl/RemoteControl/door/1
-```
-
-con body:
-
-```xml
-<RemoteControlDoor version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
-  <channelNo>1</channelNo>
-  <cmd>open</cmd>
-  <controlType>monitor</controlType>
-</RemoteControlDoor>
-```
+Se il cancello si apre, la parte **Windows → HCNetSDK → Hikvision** è configurata correttamente.
 
 ---
 
-## Funzione 2 — bridge Sinric Pro interattivo
+## 3. Configurazione Sinric Pro
 
-Questo è il modo migliore per collaudare il bridge prima di renderlo H24.
+1. Accedere a [Sinric Pro](https://sinric.pro/).
+2. Aprire **Devices → Add Device**.
+3. Creare un **Smart Switch**.
+4. Assegnargli un nome, ad esempio:
+
+```text
+Cancello
+```
+
+5. Salvare il **Device ID**.
+6. Recuperare **App Key** e **App Secret** dalle credenziali Sinric Pro.
+7. Se disponibile per il device, disabilitare il ripristino automatico dello stato `ON` alla riconnessione.
+
+Il bridge contiene comunque una protezione iniziale che ignora eventuali stati `ON` ripristinati nei primi secondi dopo l'avvio.
+
+---
+
+## 4. Configurazione Google Home
+
+1. Aprire Google Home.
+2. Aggiungere Sinric Pro tramite **Works with Google**.
+3. Verificare che compaia lo Smart Switch `Cancello`.
+4. Creare una routine con comando vocale, ad esempio:
+
+```text
+apri cancello
+```
+
+5. Come azione della routine, impostare:
+
+```text
+Accendi Cancello
+```
+
+Quando Google Home accende lo switch, il bridge riceve il comando, apre il cancello e riporta lo switch Sinric su `OFF`.
+
+---
+
+## 5. Avvio interattivo del bridge
+
+Prima della configurazione H24 è consigliato un test manuale.
 
 ```powershell
 cd C:\Home-Domotica\Hikvision
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\start-sinric-bridge-interactive.ps1
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\start-sinric-bridge-interactive.ps1
 ```
 
-Vengono chiesti:
+Vengono richiesti:
 
-- Sinric Device ID;
-- Sinric App Key;
-- Sinric App Secret;
-- password Hikvision.
+```text
+Sinric Device ID
+Sinric App Key
+Sinric App Secret
+Hikvision device password
+```
 
-App Secret e password Hikvision vengono digitati come `SecureString` e non vengono scritti nei file del repository.
-
-Quando è online:
+Quando il bridge è collegato:
 
 ```text
 Connecting to Sinric Pro...
@@ -289,71 +411,61 @@ SinricPro SDK initialized successfully
 Bridge online. Say the Google routine command when ready.
 ```
 
-Non avviare contemporaneamente il bridge interattivo e quello H24 con lo stesso Device ID.
+A questo punto provare il comando Google Home.
 
----
-
-## Funzione 3 — Google Home
-
-### Configurazione Sinric Pro
-
-1. In Sinric Pro apri **Devices -> Add Device -> Smart Switch**.
-2. Assegna un nome, ad esempio `Cancello`.
-3. Copia il **Device ID**.
-4. In **Credentials** recupera/crea **App Key** e **App Secret**.
-5. Se disponibile, disabilita il ripristino automatico dello stato `ON` alla riconnessione.
-
-Il bridge contiene comunque una protezione che ignora un vecchio `ON` nei primi secondi dopo l'avvio.
-
-### Configurazione Google Home
-
-1. Collega Sinric Pro tramite **Aggiungi dispositivo -> Works with Google**.
-2. Verifica che compaia lo switch `Cancello`.
-3. Crea una routine/automazione con comando vocale, per esempio:
+Nel log/terminale, all'apertura, sarà visibile qualcosa simile a:
 
 ```text
-apri cancello
+Hikvision output: LOGIN_OK
+OPEN_COMMAND_ACCEPTED (ISAPI tunnel; physical opening not verified)
 ```
 
-4. Come azione, **accendi** lo switch Sinric `Cancello`.
+Terminare il test con:
 
-Lo switch è volutamente momentaneo: dopo il comando, il bridge segnala nuovamente lo stato `OFF`.
+```text
+CTRL+C
+```
+
+prima di configurare la modalità H24.
 
 ---
 
-## Funzione 4 — funzionamento H24 senza login
+## 6. Configurazione H24
 
-Il setup H24 usa **Utilità di pianificazione di Windows** e avvia il bridge come `SYSTEM`:
+La modalità H24 crea un'attività di **Utilità di pianificazione di Windows** che:
 
-- all'avvio del PC;
-- senza login dell'utente;
-- anche a batteria;
-- senza fermarsi quando il notebook passa da rete elettrica a batteria;
-- con riavvio automatico dopo un errore;
-- senza timeout massimo di esecuzione.
+- parte automaticamente all'avvio del PC;
+- funziona anche senza login;
+- gira come account `SYSTEM`;
+- continua a funzionare quando il notebook passa a batteria;
+- viene riavviata automaticamente se il bridge termina;
+- evita istanze duplicate.
 
 ### Configurazione iniziale
 
-Apri **Windows PowerShell come amministratore**:
+Aprire **Windows PowerShell come amministratore** ed eseguire:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Home-Domotica\Hikvision\configure-hikvision-h24.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File C:\Home-Domotica\Hikvision\configure-hikvision-h24.ps1
 ```
 
-Inserisci:
+Vengono richiesti:
 
-- Sinric Device ID;
-- Sinric App Key;
-- Sinric App Secret;
-- password Hikvision.
+```text
+Sinric Device ID
+Sinric App Key
+Sinric App Secret
+Password Hikvision
+```
 
-Le credenziali vengono cifrate tramite **Windows DPAPI LocalMachine** e salvate fuori dal repository:
+La configurazione crea:
 
 ```text
 C:\Home-Domotica\Config\hikvision-sinric.dpapi.json
 ```
 
-Il file viene ACL-limitato a `SYSTEM` e Administrators.
+Le credenziali necessarie al funzionamento automatico vengono cifrate tramite **Windows DPAPI LocalMachine**.
 
 Il task creato si chiama:
 
@@ -361,26 +473,34 @@ Il task creato si chiama:
 Home-Domotica - Hikvision Sinric Bridge
 ```
 
-### Test H24 definitivo
+Il log viene scritto in:
 
-1. Verifica che il bridge interattivo sia chiuso.
-2. Esegui il setup H24.
-3. Prova il comando vocale.
-4. Riavvia Windows.
-5. **Non effettuare login.**
-6. Attendi circa 30-60 secondi.
-7. Prova nuovamente `apri cancello`.
+```text
+C:\Home-Domotica\Logs\sinric-bridge.log
+```
 
-Se funziona, il bridge è autonomo H24.
+### Test H24
+
+Dopo la configurazione:
+
+1. verificare che il bridge interattivo sia chiuso;
+2. provare `apri cancello`;
+3. riavviare Windows;
+4. non effettuare il login;
+5. attendere circa 30-60 secondi;
+6. provare nuovamente `apri cancello`.
+
+Se il cancello si apre anche senza login, il bridge è operativo H24.
 
 ---
 
-## Funzione 5 — stato e log
+## 7. Stato, log e gestione
 
 ### Stato rapido
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Home-Domotica\Hikvision\show-status.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File C:\Home-Domotica\Hikvision\show-status.ps1
 ```
 
 Oppure:
@@ -390,56 +510,67 @@ Get-ScheduledTask -TaskName 'Home-Domotica - Hikvision Sinric Bridge'
 Get-ScheduledTaskInfo -TaskName 'Home-Domotica - Hikvision Sinric Bridge'
 ```
 
-Con il bridge attivo lo stato atteso è:
+Con il bridge attivo lo stato normalmente risulta:
 
 ```text
 Running
 ```
 
-### Log
-
-Ultime 50 righe:
+### Ultime righe del log
 
 ```powershell
 Get-Content C:\Home-Domotica\Logs\sinric-bridge.log -Tail 50
 ```
 
-Live:
+### Log in tempo reale
 
 ```powershell
 Get-Content C:\Home-Domotica\Logs\sinric-bridge.log -Wait -Tail 20
 ```
 
-### Stop / start manuale del task
+### Arrestare il bridge H24
 
 ```powershell
 Stop-ScheduledTask -TaskName 'Home-Domotica - Hikvision Sinric Bridge'
+```
+
+### Avviarlo manualmente
+
+```powershell
 Start-ScheduledTask -TaskName 'Home-Domotica - Hikvision Sinric Bridge'
 ```
 
-### Rimozione del task H24
+### Modificare le credenziali
+
+Rieseguire:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Home-Domotica\Hikvision\uninstall-hikvision-h24.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File C:\Home-Domotica\Hikvision\configure-hikvision-h24.ps1
 ```
 
-Questo rimuove il task ma **non** cancella automaticamente il file DPAPI con le credenziali.
+### Rimuovere la modalità H24
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File C:\Home-Domotica\Hikvision\uninstall-hikvision-h24.ps1
+```
 
 ---
 
-## Adattarlo a un altro impianto
+## Adattamento a un altro impianto
 
-Per un altro impianto Hikvision controlla almeno questi valori.
-
-### IP monitor interno
-
-Default:
+Il setup di riferimento usa:
 
 ```text
-192.168.1.84
+Monitor interno:  192.168.1.84
+Porta SDK:        8000
+Username:         admin
 ```
 
-Puoi sovrascriverlo nella sessione:
+Per un altro impianto è possibile usare variabili d'ambiente.
+
+### IP monitor
 
 ```powershell
 $env:HIKVISION_MONITOR_IP = '192.168.1.100'
@@ -447,35 +578,19 @@ $env:HIKVISION_MONITOR_IP = '192.168.1.100'
 
 ### Porta SDK
 
-Default:
-
-```text
-8000
-```
-
-Override:
-
 ```powershell
 $env:HIKVISION_SDK_PORT = '8000'
 ```
 
-### Username Hikvision
-
-Default:
-
-```text
-admin
-```
-
-Override:
+### Username
 
 ```powershell
-$env:HIKVISION_USERNAME = 'nomeutente'
+$env:HIKVISION_USERNAME = 'admin'
 ```
 
-### Directory HCNetSDK
+### Cartella HCNetSDK
 
-Default testato:
+Percorso predefinito:
 
 ```text
 C:\Program Files (x86)\iVMS-4200 Site\iVMS-4200 Client\Client
@@ -484,139 +599,87 @@ C:\Program Files (x86)\iVMS-4200 Site\iVMS-4200 Client\Client
 Override:
 
 ```powershell
-$env:HIKVISION_SDK_DIR = 'C:\Percorso\Della\SDK'
+$env:HIKVISION_SDK_DIR = 'C:\Percorso\HCNetSDK'
 ```
 
-> Gli override sopra valgono per il processo corrente. Per il task H24, il repository è predisposto sul percorso/configurazione testati; se l'impianto usa valori diversi, aggiorna i default negli script o estendi il launcher H24 con gli stessi valori prima della messa in servizio.
+Per verificare dove si trova `HCNetSDK.dll`:
 
-### IP postazione esterna
-
-Nel setup di riferimento:
-
-```text
-DS-KD8003-IME1/EU -> 192.168.1.15
+```powershell
+Get-ChildItem "C:\Program Files*" -Recurse -Filter HCNetSDK.dll `
+  -ErrorAction SilentlyContinue |
+Select-Object FullName
 ```
 
-È documentato perché fa parte dell'impianto, ma **non è il target del comando di apertura funzionante**.
-
----
-
-## Struttura del repository
-
-```text
-hikvision-sinric-gate-bridge/
-├── README.md
-├── SECURITY.md
-├── CHANGELOG.md
-├── requirements.txt
-├── .gitignore
-├── .github/workflows/validate.yml
-├── sinric-hikvision-bridge.py
-├── hikvision-open-gate.ps1
-├── hikvision-diagnose.ps1
-├── run-sinric-bridge.ps1
-├── start-sinric-bridge-interactive.ps1
-├── configure-hikvision-h24.ps1
-├── run-sinric-bridge-h24.ps1
-├── check-requirements.ps1
-├── show-status.ps1
-├── uninstall-hikvision-h24.ps1
-├── sinric-bridge.env.example.ps1
-├── hikvision-gate-config.example.json
-└── docs/
-    ├── ARCHITECTURE.md
-    └── TROUBLESHOOTING.md
-```
-
-### Ruolo dei file principali
-
-| File | Funzione |
-|---|---|
-| `sinric-hikvision-bridge.py` | client Sinric Pro e logica Smart Switch momentaneo |
-| `hikvision-open-gate.ps1` | wrapper di apertura del cancello |
-| `hikvision-diagnose.ps1` | interop .NET ↔ HCNetSDK e comando ISAPI |
-| `start-sinric-bridge-interactive.ps1` | test manuale con prompt credenziali |
-| `configure-hikvision-h24.ps1` | crea credenziali DPAPI + scheduled task |
-| `run-sinric-bridge-h24.ps1` | launcher SYSTEM H24 e gestione log |
-| `check-requirements.ps1` | verifica prerequisiti |
-| `show-status.ps1` | riepilogo stato task + log |
-
----
-
-## Sicurezza
-
-Il repository **non deve contenere credenziali reali**.
-
-Non committare mai:
-
-```text
-SINRICPRO_APP_SECRET
-HIKVISION_GATE_PASSWORD
-file DPAPI generato
-log locali
-file .env compilati
-```
-
-Anche Device ID e App Key sono lasciati vuoti negli esempi pubblici.
-
-Consulta [`SECURITY.md`](SECURITY.md) prima di pubblicare il repository.
+> Gli override sono utili per i test manuali. Gli script H24 inclusi sono predisposti per i percorsi della configurazione di riferimento.
 
 ---
 
 ## Troubleshooting
 
-Guida completa:
+La guida completa è disponibile qui:
 
 [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)
 
-Include le soluzioni per:
+Problemi documentati:
 
-- Execution Policy;
-- `BadImageFormatException / 0x8007000B`;
-- mismatch x86/x64;
-- `SDK_ERROR=17`;
-- `ProtectedData` non trovato in PowerShell 5.1;
-- task H24 che termina con `LastTaskResult = 1`;
-- `HCNetSDK.dll` non trovata;
-- login Hikvision fallito;
-- comandi duplicati;
-- log con output binario.
+| Problema | Causa tipica |
+|---|---|
+| `L'esecuzione di script è disabilitata` | Execution Policy PowerShell |
+| `BadImageFormatException / 0x8007000B` | mismatch x86/x64 |
+| `SDK_ERROR=17` | struttura SDK non compatibile x64 |
+| `ProtectedData` non trovato | assembly `System.Security` non caricato |
+| Task `Ready`, risultato `1` | output Sinric su STDERR interpretato da PowerShell |
+| `HCNetSDK.dll` non trovata | iVMS-4200 non installato o percorso differente |
+| `LOGIN_FAILED` | IP, porta, username/password o rete |
+| Aperture duplicate | routine duplicata o cooldown da controllare |
+
+Test rapido della porta Hikvision:
+
+```powershell
+Test-NetConnection 192.168.1.84 -Port 8000
+```
 
 ---
 
-## Pubblicazione su GitHub
+## File principali
 
-Prima controlla che non ci siano segreti:
-
-```powershell
-cd C:\Home-Domotica\Hikvision
-git status
-```
-
-Poi, per un nuovo repository:
-
-```powershell
-git init
-git add .
-git commit -m "Initial working Hikvision Sinric gate bridge"
-git branch -M main
-git remote add origin https://github.com/USERNAME/hikvision-sinric-gate-bridge.git
-git push -u origin main
-```
-
-### Licenza
-
-Questo pacchetto non inserisce automaticamente una licenza software. Prima di renderlo pubblico, scegli esplicitamente la licenza che vuoi applicare (ad esempio MIT se vuoi permettere riuso ampio con poche condizioni).
+| File | Funzione |
+|---|---|
+| `sinric-hikvision-bridge.py` | bridge Sinric Pro → Hikvision |
+| `hikvision-open-gate.ps1` | comando di apertura del cancello |
+| `hikvision-diagnose.ps1` | login SDK, diagnostica e chiamata ISAPI |
+| `start-sinric-bridge-interactive.ps1` | avvio manuale per collaudo |
+| `configure-hikvision-h24.ps1` | configura credenziali e task H24 |
+| `run-sinric-bridge-h24.ps1` | launcher automatico eseguito come SYSTEM |
+| `check-requirements.ps1` | verifica prerequisiti |
+| `show-status.ps1` | mostra stato del servizio e log |
+| `uninstall-hikvision-h24.ps1` | rimuove il task H24 |
+| `requirements.txt` | dipendenze Python |
+| `hikvision-gate-config.example.json` | esempio configurazione dell'impianto |
 
 ---
 
-## Stato del progetto
+## Stato della configurazione di riferimento
 
-Configurazione di riferimento verificata il **28 settembre 2026**:
+Testato con successo su:
 
-- apertura locale Hikvision: OK;
-- HCNetSDK x64: OK;
-- Sinric Pro Python bridge: OK;
-- Google Home voice routine: OK;
-- avvio H24 come `SYSTEM`: OK;
-- funzionamento dopo reboot senza login: OK.
+```text
+Windows 11 Pro x64
+Python 3.13
+iVMS-4200 / HCNetSDK x64
+Hikvision DS-KH6320-WTE1/EU
+Hikvision DS-KD8003-IME1/EU
+Sinric Pro Smart Switch
+Google Home
+```
+
+Verifiche completate:
+
+```text
+[OK] Login Hikvision tramite HCNetSDK
+[OK] Apertura locale
+[OK] Bridge Python Sinric Pro
+[OK] Comando Google Home
+[OK] Avvio automatico H24
+[OK] Funzionamento dopo reboot senza login
+```
