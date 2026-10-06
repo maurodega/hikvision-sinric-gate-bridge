@@ -23,6 +23,7 @@ Il progetto può funzionare in due modalità:
 - [4. Configurazione Google Home](#4-configurazione-google-home)
 - [5. Avvio interattivo del bridge](#5-avvio-interattivo-del-bridge)
 - [6. Configurazione H24](#6-configurazione-h24)
+- [Watchdog Sinric](#watchdog-sinric)
 - [7. Stato, log e gestione](#7-stato-log-e-gestione)
 - [Adattamento a un altro impianto](#adattamento-a-un-altro-impianto)
 - [Troubleshooting](#troubleshooting)
@@ -494,6 +495,111 @@ Se il cancello si apre anche senza login, il bridge è operativo H24.
 
 ---
 
+## Watchdog Sinric
+
+Il riavvio automatico del task H24 interviene quando il processo termina. In caso di errore DNS o WebSocket, invece, Python può rimanere attivo mentre Sinric risulta offline: per questo è stato aggiunto un **watchdog separato**, eseguito come `SYSTEM` ogni **5 minuti**.
+
+| Elemento | Nome / percorso |
+|---|---|
+| Task watchdog | `Home-Domotica - Sinric Watchdog` |
+| Script di controllo | `C:\Home-Domotica\Hikvision\watchdog-sinric.ps1` |
+| Script di installazione | `C:\Home-Domotica\Hikvision\install-sinric-watchdog.ps1` |
+| Task sorvegliato | `Home-Domotica - Hikvision Sinric Bridge` |
+| Log letto | `C:\Home-Domotica\Logs\sinric-bridge.log` |
+| Log degli interventi | `C:\Home-Domotica\Logs\sinric-watchdog.log` |
+
+### Controlli della versione 2
+
+A ogni esecuzione il watchdog controlla:
+
+1. che il task del bridge esista; se manca, scrive un errore e termina con codice `1`;
+2. che il task sia `Running` e sia presente un processo `python.exe` con `sinric-hikvision-bridge.py` nella riga di comando; se uno dei due controlli fallisce, tenta il riavvio;
+3. le ultime **500 righe** del log, cercando questi errori:
+
+```text
+Reconnection failed
+WebSocket connection failed: ... getaddrinfo failed
+WebSocket error: ... getaddrinfo failed
+```
+
+Gli errori precedenti all'ultima riga `Avvio bridge Sinric Pro -> Hikvision` trovata nella porzione di log letta vengono ignorati. Se il marcatore di avvio non è nelle ultime 500 righe, un errore presente in quelle righe può comunque provocare un riavvio.
+
+Quando interviene, il watchdog registra il motivo, ferma il task del bridge, attende **3 secondi**, lo avvia nuovamente e attende altri **5 secondi** prima di terminare. Non invia direttamente comandi di apertura del cancello.
+
+Il controllo periodico permette di tentare il recupero al giro successivo, normalmente entro circa 5 minuti. La riconnessione richiede comunque che rete, DNS e servizio Sinric tornino disponibili. Il controllo si basa su task, processo e log: non è una verifica completa della connessione cloud e non rileva tutti i possibili blocchi.
+
+### Installazione sul server
+
+I due script del watchdog sono distribuiti separatamente dal pacchetto base presente in questa cartella. Copiare `watchdog-sinric.ps1` **versione 2** e `install-sinric-watchdog.ps1` in `C:\Home-Domotica\Hikvision`, dopo aver configurato il bridge H24.
+
+Da **Windows PowerShell come amministratore**:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File C:\Home-Domotica\Hikvision\install-sinric-watchdog.ps1
+```
+
+L'installer registra il task ogni 5 minuti come `SYSTEM` e avvia subito un controllo. Per aggiornare un watchdog già installato alla v2 basta sostituire `watchdog-sinric.ps1` nello stesso percorso; non occorre ricreare il task.
+
+### Stato e log
+
+```powershell
+Get-ScheduledTaskInfo -TaskName 'Home-Domotica - Sinric Watchdog' |
+  Select-Object LastRunTime, LastTaskResult, NextRunTime
+```
+
+Il watchdog è un controllo breve: tra due esecuzioni il suo stato normalmente è `Ready`, mentre il bridge rimane `Running`. `LastTaskResult = 0` indica che lo script è terminato con quel codice; non certifica da solo che Sinric sia online o che un riavvio sia riuscito.
+
+Per eseguire subito un controllo (può riavviare il bridge se rileva un problema):
+
+```powershell
+Start-ScheduledTask -TaskName 'Home-Domotica - Sinric Watchdog'
+```
+
+Per leggere gli interventi:
+
+```powershell
+$watchdogLog = 'C:\Home-Domotica\Logs\sinric-watchdog.log'
+if (Test-Path -LiteralPath $watchdogLog) {
+  Get-Content -LiteralPath $watchdogLog -Tail 20
+} else {
+  Write-Host 'Nessun log watchdog presente: controllare anche lo stato del task.'
+}
+```
+
+Il log viene creato solo quando il watchdog tenta un riavvio o rileva che il task del bridge manca. La sua assenza può quindi essere normale. Un intervento può riportare:
+
+```text
+Riavvio bridge: Sinric offline dopo l'ultimo avvio: ...
+```
+
+Per verificare il recupero, controllare il nuovo avvio in `sinric-bridge.log` e lo stato del dispositivo nel portale Sinric. Non aggiungere errori artificiali al log in uso: il bridge può tenerlo aperto in scrittura esclusiva e il watchdog li tratterebbe come errori reali.
+
+### Manutenzione e rimozione
+
+Prima di arrestare volontariamente il bridge, disabilitare e fermare anche il watchdog, altrimenti tenterà di riavviarlo al controllo successivo:
+
+```powershell
+Disable-ScheduledTask -TaskName 'Home-Domotica - Sinric Watchdog'
+Stop-ScheduledTask -TaskName 'Home-Domotica - Sinric Watchdog'
+Stop-ScheduledTask -TaskName 'Home-Domotica - Hikvision Sinric Bridge'
+```
+
+Al termine della manutenzione:
+
+```powershell
+Start-ScheduledTask -TaskName 'Home-Domotica - Hikvision Sinric Bridge'
+Enable-ScheduledTask -TaskName 'Home-Domotica - Sinric Watchdog'
+```
+
+Lo script `uninstall-hikvision-h24.ps1` rimuove soltanto il task del bridge. Per rimuovere anche il watchdog, disabilitarlo e fermarlo come sopra, quindi eseguire:
+
+```powershell
+Unregister-ScheduledTask -TaskName 'Home-Domotica - Sinric Watchdog' -Confirm:$false
+```
+
+---
+
 ## 7. Stato, log e gestione
 
 ### Stato rapido
@@ -529,6 +635,8 @@ Get-Content C:\Home-Domotica\Logs\sinric-bridge.log -Wait -Tail 20
 ```
 
 ### Arrestare il bridge H24
+
+Se è installato il watchdog, seguire prima i passaggi di [manutenzione](#manutenzione-e-rimozione) per evitare che riavvii il bridge.
 
 ```powershell
 Stop-ScheduledTask -TaskName 'Home-Domotica - Hikvision Sinric Bridge'
@@ -683,6 +791,3 @@ Verifiche completate:
 [OK] Avvio automatico H24
 [OK] Funzionamento dopo reboot senza login
 ```
-<p align="center">
-  Powered by <kbd>Mauro De Gaetanis</kbd>
-</p>
