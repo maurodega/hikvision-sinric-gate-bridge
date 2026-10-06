@@ -530,7 +530,7 @@ Il controllo periodico permette di tentare il recupero al giro successivo, norma
 
 ### Installazione sul server
 
-I due script del watchdog sono distribuiti separatamente dal pacchetto base presente in questa cartella. Copiare `watchdog-sinric.ps1` **versione 2** e `install-sinric-watchdog.ps1` in `C:\Home-Domotica\Hikvision`, dopo aver configurato il bridge H24.
+I due script del watchdog sono distribuiti separatamente dal pacchetto base presente in questa cartella. Copiare `watchdog-sinric.ps1` e `install-sinric-watchdog.ps1` in `C:\Home-Domotica\Hikvision`, dopo aver configurato il bridge H24.
 
 Da **Windows PowerShell come amministratore**:
 
